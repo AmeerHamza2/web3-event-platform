@@ -1,0 +1,15 @@
+# Binaries
+/bin/
+*.exe
+
+# Local keystore data
+/data/
+
+# Env files
+.env
+*.local
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,80 @@
+# Local one-command stack: NATS broker + the four services behind the gateway.
+# Only the gateway is published to the host; internal services talk over the
+# private compose network, mirroring the "edge is public, services are private"
+# topology.
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    # -js: JetStream (durable streams); -m 8222: HTTP monitoring for healthcheck
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222" # client
+      - "8222:8222" # monitoring
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  user:
+    build:
+      context: .
+      args: { SERVICE: user }
+    environment:
+      USER_ADDR: ":8081"
+      NATS_URL: "nats://nats:4222"
+    depends_on:
+      nats: { condition: service_healthy }
+    expose: ["8081"]
+
+  wallet:
+    build:
+      context: .
+      args: { SERVICE: wallet }
+    environment:
+      WALLET_ADDR: ":8082"
+      NATS_URL: "nats://nats:4222"
+      KEYSTORE_DIR: "/data/keystore"
+      KEYSTORE_PASSPHRASE: "dev-keystore-passphrase"
+      KEYSTORE_LIGHT_SCRYPT: "true" # fast key derivation for local dev
+    volumes:
+      - wallet-keystore:/data/keystore
+    depends_on:
+      nats: { condition: service_healthy }
+    expose: ["8082"]
+
+  notification:
+    build:
+      context: .
+      args: { SERVICE: notification }
+    environment:
+      NOTIFICATION_ADDR: ":8083"
+      NATS_URL: "nats://nats:4222"
+    depends_on:
+      nats: { condition: service_healthy }
+    expose: ["8083"]
+
+  gateway:
+    build:
+      context: .
+      args: { SERVICE: gateway }
+    environment:
+      GATEWAY_ADDR: ":8080"
+      ENV: "development"
+      JWT_SECRET: "dev-insecure-secret-change-me"
+      USER_URL: "http://user:8081"
+      WALLET_URL: "http://wallet:8082"
+      ADMIN_CLIENT_ID: "admin-client"
+      ADMIN_CLIENT_SECRET: "admin-secret"
+      USER_CLIENT_ID: "user-client"
+      USER_CLIENT_SECRET: "user-secret"
+    ports:
+      - "8080:8080" # the only publicly exposed service
+    depends_on:
+      - user
+      - wallet
+      - notification
+
+volumes:
+  wallet-keystore:

@@ -1,0 +1,67 @@
+// Command gateway runs the API Gateway.
+package main
+
+import (
+	"os"
+	"time"
+
+	"github.com/AmeerHamza2/web3-event-platform/internal/gateway"
+	"github.com/AmeerHamza2/web3-event-platform/pkg/auth"
+	"github.com/AmeerHamza2/web3-event-platform/pkg/httpx"
+	"github.com/AmeerHamza2/web3-event-platform/pkg/logging"
+	"github.com/AmeerHamza2/web3-event-platform/pkg/server"
+)
+
+const defaultJWTSecret = "dev-insecure-secret-change-me"
+
+func main() {
+	log := logging.New("gateway")
+
+	addr := server.EnvOr("GATEWAY_ADDR", ":8080")
+	jwtSecret := server.EnvOr("JWT_SECRET", defaultJWTSecret)
+	production := server.EnvOr("ENV", "development") == "production"
+
+	// Refuse to boot in production with the baked-in dev secret.
+	if production && jwtSecret == defaultJWTSecret {
+		log.Error("refusing to start: JWT_SECRET is the default in production")
+		os.Exit(1)
+	}
+	if !production && jwtSecret == defaultJWTSecret {
+		log.Warn("using default JWT secret — development only")
+	}
+
+	authn := auth.NewAuthenticator(jwtSecret, "web3-event-platform", time.Hour)
+
+	cfg := gateway.Config{
+		Auth: authn,
+		Clients: map[string]gateway.Client{
+			// Demo client registry. In production these map to an OAuth/OIDC
+			// client store; an admin client and a user client illustrate RBAC.
+			server.EnvOr("ADMIN_CLIENT_ID", "admin-client"): {
+				Secret: server.EnvOr("ADMIN_CLIENT_SECRET", "admin-secret"),
+				Role:   auth.RoleAdmin,
+			},
+			server.EnvOr("USER_CLIENT_ID", "user-client"): {
+				Secret: server.EnvOr("USER_CLIENT_SECRET", "user-secret"),
+				Role:   auth.RoleUser,
+			},
+		},
+		UserURL:   server.EnvOr("USER_URL", "http://localhost:8081"),
+		WalletURL: server.EnvOr("WALLET_URL", "http://localhost:8082"),
+		RateLimit: gateway.NewRateLimiter(20, 40), // 20 req/s per IP, burst 40
+	}
+
+	gw, err := gateway.New(cfg)
+	if err != nil {
+		log.Error("init gateway", "error", err)
+		os.Exit(1)
+	}
+
+	handler := httpx.Chain(gw.Handler(),
+		httpx.RequestID,
+		httpx.Logger(log),
+		httpx.Recovery(log),
+	)
+
+	server.Run(log, addr, handler)
+}
