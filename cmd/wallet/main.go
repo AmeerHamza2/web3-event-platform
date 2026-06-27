@@ -1,4 +1,3 @@
-// Command wallet runs the Wallet service.
 package main
 
 import (
@@ -10,6 +9,9 @@ import (
 	"github.com/AmeerHamza2/web3-event-platform/pkg/logging"
 	"github.com/AmeerHamza2/web3-event-platform/pkg/server"
 )
+
+// Sepolia chain ID.
+const sepoliaChainID = 11155111
 
 func main() {
 	log := logging.New("wallet")
@@ -27,8 +29,7 @@ func main() {
 	}
 	defer bus.Close()
 
-	// Sepolia chain ID; configurable for other testnets.
-	svc, err := wallet.NewService(ksDir, pass, 11155111, light, bus)
+	svc, err := wallet.NewService(ksDir, pass, sepoliaChainID, light, bus)
 	if err != nil {
 		log.Error("init wallet service", "error", err)
 		os.Exit(1)

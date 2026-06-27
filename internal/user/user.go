@@ -1,10 +1,6 @@
-// Package user is the User service: it owns user identities and publishes a
-// user.created domain event when a new account is registered.
-//
-// The Store interface abstracts persistence. The MVP ships an in-memory store
-// so the platform runs with zero external database; a Postgres implementation
-// satisfies the same interface (the production target), which is why the
-// service layer never imports a DB driver directly.
+// Package user owns user identities and publishes user.created. Store abstracts
+// persistence; the MVP ships an in-memory implementation, Postgres is the
+// production swap.
 package user
 
 import (
@@ -21,17 +17,14 @@ import (
 	"github.com/AmeerHamza2/web3-event-platform/pkg/httpx"
 )
 
-// ErrNotFound is returned when a user id is unknown.
 var ErrNotFound = errors.New("user not found")
 
-// User is a platform identity.
 type User struct {
 	ID        string    `json:"id"`
 	Email     string    `json:"email"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// Store is the persistence seam (in-memory for the MVP, Postgres in prod).
 type Store interface {
 	Create(u User) error
 	Get(id string) (User, error)
@@ -44,7 +37,6 @@ type MemStore struct {
 	users map[string]User
 }
 
-// NewMemStore builds an empty in-memory store.
 func NewMemStore() *MemStore { return &MemStore{users: make(map[string]User)} }
 
 func (m *MemStore) Create(u User) error {
@@ -74,18 +66,16 @@ func (m *MemStore) List() []User {
 	return out
 }
 
-// Service is the user business logic.
 type Service struct {
 	store Store
 	bus   events.Bus
 }
 
-// NewService wires the user service.
 func NewService(store Store, bus events.Bus) *Service {
 	return &Service{store: store, bus: bus}
 }
 
-// Register validates an email, creates the user, and publishes user.created.
+// Register validates the email, persists the user, and publishes user.created.
 func (s *Service) Register(ctx context.Context, email string) (User, error) {
 	if _, err := mail.ParseAddress(email); err != nil {
 		return User{}, errors.New("invalid email")
@@ -94,18 +84,14 @@ func (s *Service) Register(ctx context.Context, email string) (User, error) {
 	if err := s.store.Create(u); err != nil {
 		return User{}, err
 	}
-	// Fire-and-forget: a bus hiccup must not fail registration.
-	_ = s.bus.Publish(ctx, events.SubjectUserCreated, u)
+	_ = s.bus.Publish(ctx, events.SubjectUserCreated, u) // best-effort
 	return u, nil
 }
-
-// --- HTTP ---
 
 type registerRequest struct {
 	Email string `json:"email"`
 }
 
-// Routes returns the user service's HTTP handler.
 func (s *Service) Routes() http.Handler {
 	mux := http.NewServeMux()
 
@@ -132,7 +118,6 @@ func (s *Service) Routes() http.Handler {
 		httpx.JSON(w, http.StatusOK, u)
 	})
 
-	// Listing all users is an admin-only operation (RBAC enforced here).
 	mux.Handle("GET /users", httpx.RequireRole("admin")(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			httpx.JSON(w, http.StatusOK, s.store.List())

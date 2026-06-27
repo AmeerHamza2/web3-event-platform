@@ -1,15 +1,6 @@
-// Package events is the domain-event contract and message-bus transport shared
-// by every service on the platform.
-//
-// Services never talk to each other directly for lifecycle notifications; they
-// publish domain events to NATS subjects and any number of consumers react
-// asynchronously. This is the spine of the platform's event-driven design: the
-// User service doesn't know the Notification service exists, it just publishes
-// "user.created" and walks away. Adding a new consumer (analytics, audit,
-// indexer) is a deployment, not a code change to producers.
-//
-// NATS is the transport here; the Bus interface keeps that swappable for Kafka
-// or NATS JetStream (durable streams) without touching producer/consumer code.
+// Package events defines the platform's domain-event contract and a NATS-backed
+// message bus. Services publish events and react to them asynchronously rather
+// than calling each other directly.
 package events
 
 import (
@@ -21,8 +12,8 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-// Subject names. We use a dotted hierarchy so consumers can wildcard-subscribe
-// (e.g. "wallet.>" for every wallet event) the way NATS subjects are designed.
+// Event subjects. The dotted hierarchy lets consumers wildcard-subscribe
+// (e.g. "wallet.>").
 const (
 	SubjectUserCreated   = "user.created"
 	SubjectWalletCreated = "wallet.created"
@@ -30,15 +21,15 @@ const (
 	SubjectPaymentMade   = "payment.made"
 )
 
-// Event is the envelope every message on the bus shares.
+// Event is the envelope for every message on the bus.
 type Event struct {
 	Subject string          `json:"subject"`
 	Time    time.Time       `json:"time"`
 	Data    json.RawMessage `json:"data"`
 }
 
-// Bus is the minimal publish/subscribe surface the services depend on.
-// Implemented by NATSBus; mockable in tests.
+// Bus is the publish/subscribe surface services depend on. NATSBus is the
+// production implementation; tests provide their own.
 type Bus interface {
 	Publish(ctx context.Context, subject string, data any) error
 	Subscribe(subject string, handler func(Event)) (func() error, error)
@@ -50,12 +41,12 @@ type NATSBus struct {
 	nc *nats.Conn
 }
 
-// Connect dials NATS with sane reconnect behaviour so a broker restart doesn't
-// take the services down with it.
+// Connect dials NATS with indefinite reconnect so a broker restart doesn't take
+// the services down with it.
 func Connect(url string) (*NATSBus, error) {
 	nc, err := nats.Connect(url,
-		nats.MaxReconnects(-1),            // reconnect forever
-		nats.ReconnectWait(2*time.Second), // back off between attempts
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(2*time.Second),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("connect nats %q: %w", url, err)
@@ -63,14 +54,13 @@ func Connect(url string) (*NATSBus, error) {
 	return &NATSBus{nc: nc}, nil
 }
 
-// Publish marshals data into an Event envelope and publishes it to subject.
+// Publish wraps data in an Event envelope and publishes it to subject.
 func (b *NATSBus) Publish(_ context.Context, subject string, data any) error {
 	payload, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("marshal event data: %w", err)
 	}
-	evt := Event{Subject: subject, Time: time.Now().UTC(), Data: payload}
-	raw, err := json.Marshal(evt)
+	raw, err := json.Marshal(Event{Subject: subject, Time: time.Now().UTC(), Data: payload})
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)
 	}
@@ -81,13 +71,12 @@ func (b *NATSBus) Publish(_ context.Context, subject string, data any) error {
 }
 
 // Subscribe registers handler for every message on subject. The returned
-// function unsubscribes. Malformed messages are skipped rather than crashing
-// the consumer.
+// function unsubscribes. Malformed messages are dropped.
 func (b *NATSBus) Subscribe(subject string, handler func(Event)) (func() error, error) {
 	sub, err := b.nc.Subscribe(subject, func(msg *nats.Msg) {
 		var evt Event
 		if err := json.Unmarshal(msg.Data, &evt); err != nil {
-			return // drop poison message; a real system would dead-letter it
+			return
 		}
 		handler(evt)
 	})
@@ -97,7 +86,7 @@ func (b *NATSBus) Subscribe(subject string, handler func(Event)) (func() error, 
 	return sub.Unsubscribe, nil
 }
 
-// Close drains and closes the NATS connection.
+// Close drains and closes the connection.
 func (b *NATSBus) Close() {
 	if b.nc != nil {
 		_ = b.nc.Drain()

@@ -1,6 +1,5 @@
-// Package httpx holds the HTTP plumbing shared by every service: JSON helpers,
-// and middleware for request-ID correlation, panic recovery, structured access
-// logs, and gateway-trust authorization.
+// Package httpx holds shared HTTP helpers and middleware: JSON encoding,
+// request-ID correlation, panic recovery, access logging, and RBAC.
 package httpx
 
 import (
@@ -19,30 +18,27 @@ type ctxKey int
 
 const requestIDKey ctxKey = 0
 
-// JSON writes v as a JSON response with the given status code.
 func JSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// Error writes a JSON error body. It never leaks internals — callers pass a
-// safe, client-facing message.
 func Error(w http.ResponseWriter, status int, msg string) {
 	JSON(w, status, map[string]string{"error": msg})
 }
 
-// DecodeJSON reads a JSON request body into v, rejecting unknown fields and
-// oversized bodies (a basic abuse guard).
+// DecodeJSON reads a JSON body into v, rejecting unknown fields and bodies over
+// 1 MiB.
 func DecodeJSON(r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20) // 1 MiB cap
+	r.Body = http.MaxBytesReader(nil, r.Body, 1<<20)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
 }
 
-// RequestID assigns a correlation ID to every request (honouring an inbound
-// X-Request-ID so the gateway's ID propagates through the call chain).
+// RequestID assigns a correlation ID per request, honouring an inbound
+// X-Request-ID so it propagates across services.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-ID")
@@ -57,7 +53,6 @@ func RequestID(next http.Handler) http.Handler {
 	})
 }
 
-// RequestIDFrom extracts the correlation ID from the context.
 func RequestIDFrom(ctx context.Context) string {
 	if id, ok := ctx.Value(requestIDKey).(string); ok {
 		return id
@@ -65,7 +60,7 @@ func RequestIDFrom(ctx context.Context) string {
 	return ""
 }
 
-// Recovery converts a panic into a 500 without leaking the stack to the client.
+// Recovery turns a panic into a 500 without leaking the stack to the client.
 func Recovery(log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -102,9 +97,6 @@ func Logger(log *slog.Logger) func(http.Handler) http.Handler {
 }
 
 // RequireRole rejects requests whose gateway-supplied role doesn't match.
-// Internal services trust the X-Auth-Role header because only the gateway can
-// reach them on the private network; the gateway sets it only after verifying
-// the JWT.
 func RequireRole(role string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +109,7 @@ func RequireRole(role string) func(http.Handler) http.Handler {
 	}
 }
 
-// Chain applies middleware in declaration order (first listed runs outermost).
+// Chain applies middleware in order; the first listed runs outermost.
 func Chain(h http.Handler, mw ...func(http.Handler) http.Handler) http.Handler {
 	for i := len(mw) - 1; i >= 0; i-- {
 		h = mw[i](h)

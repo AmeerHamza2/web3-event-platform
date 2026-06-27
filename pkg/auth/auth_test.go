@@ -26,8 +26,7 @@ func TestIssueVerifyRoundtrip(t *testing.T) {
 	}
 }
 
-// A token signed with "alg":"none" must be rejected — the classic JWT
-// algorithm-confusion attack. This is a security regression guard.
+// alg=none tokens must be rejected (algorithm-confusion attack).
 func TestVerifyRejectsAlgNone(t *testing.T) {
 	a := newTestAuth()
 	claims := Claims{Role: RoleAdmin, RegisteredClaims: jwt.RegisteredClaims{Issuer: "test-issuer"}}

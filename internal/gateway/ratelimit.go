@@ -5,9 +5,7 @@ import (
 	"time"
 )
 
-// RateLimiter is a simple per-key token-bucket limiter (keyed by client IP at
-// the edge). It bounds abuse without a external dependency; a production edge
-// would push this to the ingress/API-gateway layer or a shared Redis bucket.
+// RateLimiter is a per-key token-bucket limiter, keyed by client IP at the edge.
 type RateLimiter struct {
 	rate    float64 // tokens per second
 	burst   float64 // bucket capacity
@@ -20,7 +18,7 @@ type bucket struct {
 	last   time.Time
 }
 
-// NewRateLimiter allows `rate` requests/sec per key with a `burst` allowance.
+// NewRateLimiter allows rate requests/sec per key with a burst allowance.
 func NewRateLimiter(rate, burst float64) *RateLimiter {
 	return &RateLimiter{rate: rate, burst: burst, buckets: make(map[string]*bucket)}
 }
@@ -37,11 +35,8 @@ func (rl *RateLimiter) Allow(key string) bool {
 		return true
 	}
 
-	// Refill proportional to elapsed time, capped at burst.
-	elapsed := now.Sub(b.last).Seconds()
-	b.tokens = min(rl.burst, b.tokens+elapsed*rl.rate)
+	b.tokens = min(rl.burst, b.tokens+now.Sub(b.last).Seconds()*rl.rate)
 	b.last = now
-
 	if b.tokens < 1 {
 		return false
 	}

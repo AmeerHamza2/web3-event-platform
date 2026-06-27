@@ -1,5 +1,3 @@
-// Command notification runs the Notification service: a NATS event consumer
-// with a health endpoint for liveness probes.
 package main
 
 import (

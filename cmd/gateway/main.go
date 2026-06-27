@@ -1,4 +1,3 @@
-// Command gateway runs the API Gateway.
 package main
 
 import (
@@ -21,7 +20,6 @@ func main() {
 	jwtSecret := server.EnvOr("JWT_SECRET", defaultJWTSecret)
 	production := server.EnvOr("ENV", "development") == "production"
 
-	// Refuse to boot in production with the baked-in dev secret.
 	if production && jwtSecret == defaultJWTSecret {
 		log.Error("refusing to start: JWT_SECRET is the default in production")
 		os.Exit(1)
@@ -35,8 +33,6 @@ func main() {
 	cfg := gateway.Config{
 		Auth: authn,
 		Clients: map[string]gateway.Client{
-			// Demo client registry. In production these map to an OAuth/OIDC
-			// client store; an admin client and a user client illustrate RBAC.
 			server.EnvOr("ADMIN_CLIENT_ID", "admin-client"): {
 				Secret: server.EnvOr("ADMIN_CLIENT_SECRET", "admin-secret"),
 				Role:   auth.RoleAdmin,
@@ -48,7 +44,7 @@ func main() {
 		},
 		UserURL:   server.EnvOr("USER_URL", "http://localhost:8081"),
 		WalletURL: server.EnvOr("WALLET_URL", "http://localhost:8082"),
-		RateLimit: gateway.NewRateLimiter(20, 40), // 20 req/s per IP, burst 40
+		RateLimit: gateway.NewRateLimiter(20, 40),
 	}
 
 	gw, err := gateway.New(cfg)

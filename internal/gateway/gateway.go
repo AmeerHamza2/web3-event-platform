@@ -1,11 +1,6 @@
-// Package gateway is the API Gateway: the single public entrypoint to the
-// platform. It terminates auth (issues + verifies JWTs), enforces RBAC and rate
-// limits at the edge, and reverse-proxies to internal services, injecting the
-// authenticated identity as trusted headers.
-//
-// Keeping auth, rate limiting, and routing here means internal services stay
-// small and unauthenticated-on-the-private-network — they trust the gateway.
-// This is the API-gateway / edge pattern the JD calls out.
+// Package gateway is the platform's public edge: it issues and verifies JWTs,
+// enforces RBAC and rate limits, and reverse-proxies to internal services,
+// forwarding the verified identity as trusted headers.
 package gateway
 
 import (
@@ -18,29 +13,26 @@ import (
 	"github.com/AmeerHamza2/web3-event-platform/pkg/httpx"
 )
 
-// Client is a registered API client (machine-to-machine credential).
+// Client is a registered machine-to-machine credential.
 type Client struct {
 	Secret string
 	Role   string
 }
 
-// Config configures the gateway.
 type Config struct {
 	Auth      *auth.Authenticator
-	Clients   map[string]Client // clientID -> credential
-	UserURL   string            // user service base URL
-	WalletURL string            // wallet service base URL
+	Clients   map[string]Client
+	UserURL   string
+	WalletURL string
 	RateLimit *RateLimiter
 }
 
-// Gateway is the assembled edge handler.
 type Gateway struct {
 	cfg         Config
 	userProxy   *httputil.ReverseProxy
 	walletProxy *httputil.ReverseProxy
 }
 
-// New builds the gateway, wiring reverse proxies to the upstream services.
 func New(cfg Config) (*Gateway, error) {
 	uu, err := url.Parse(cfg.UserURL)
 	if err != nil {
@@ -50,15 +42,10 @@ func New(cfg Config) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Gateway{
-		cfg:         cfg,
-		userProxy:   newProxy(uu),
-		walletProxy: newProxy(wu),
-	}, nil
+	return &Gateway{cfg: cfg, userProxy: newProxy(uu), walletProxy: newProxy(wu)}, nil
 }
 
-// newProxy builds a reverse proxy that strips the /api/v1 public prefix so the
-// upstream sees its own native paths (/users, /wallets).
+// newProxy strips the /api/v1 public prefix so upstreams see their native paths.
 func newProxy(target *url.URL) *httputil.ReverseProxy {
 	p := httputil.NewSingleHostReverseProxy(target)
 	orig := p.Director
@@ -70,17 +57,14 @@ func newProxy(target *url.URL) *httputil.ReverseProxy {
 	return p
 }
 
-// Handler returns the fully-wired gateway HTTP handler.
 func (g *Gateway) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// Public: health + token issuance.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		httpx.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("POST /api/v1/auth/token", g.issueToken)
 
-	// Protected: everything under /api/v1/{users,wallets} requires a valid token.
 	mux.Handle("/api/v1/users", g.authed(g.userProxy))
 	mux.Handle("/api/v1/users/", g.authed(g.userProxy))
 	mux.Handle("/api/v1/wallets", g.authed(g.walletProxy))
@@ -114,8 +98,8 @@ func (g *Gateway) issueToken(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, tok)
 }
 
-// authed verifies the bearer token, applies the rate limit, and forwards the
-// authenticated subject + role to the upstream as trusted headers.
+// authed rate-limits, verifies the bearer token, and forwards the verified
+// subject and role to the upstream.
 func (g *Gateway) authed(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if g.cfg.RateLimit != nil && !g.cfg.RateLimit.Allow(clientIP(r)) {
@@ -123,8 +107,7 @@ func (g *Gateway) authed(next http.Handler) http.Handler {
 			return
 		}
 
-		bearer := r.Header.Get("Authorization")
-		raw, ok := strings.CutPrefix(bearer, "Bearer ")
+		raw, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok {
 			httpx.Error(w, http.StatusUnauthorized, "missing bearer token")
 			return
@@ -135,9 +118,7 @@ func (g *Gateway) authed(next http.Handler) http.Handler {
 			return
 		}
 
-		// Strip any client-supplied identity headers, then set the verified ones.
-		r.Header.Del(auth.HeaderSubject)
-		r.Header.Del(auth.HeaderRole)
+		// Overwrite any client-supplied identity headers with the verified ones.
 		r.Header.Set(auth.HeaderSubject, claims.Subject)
 		r.Header.Set(auth.HeaderRole, claims.Role)
 

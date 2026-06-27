@@ -1,5 +1,5 @@
-// Package server holds the graceful HTTP-server lifecycle and small env helpers
-// shared by every service main, so each entrypoint stays a few lines.
+// Package server provides the graceful HTTP-server lifecycle and env helpers
+// shared by every service entrypoint.
 package server
 
 import (
@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// EnvOr returns the env var named key, or def when unset/empty.
+// EnvOr returns the env var named key, or def when unset.
 func EnvOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -21,9 +21,7 @@ func EnvOr(key, def string) string {
 	return def
 }
 
-// Run starts an HTTP server on addr and blocks until SIGINT/SIGTERM, then
-// drains in-flight requests with a 10s deadline. Every service shares this so
-// shutdown semantics (and the slowloris ReadHeaderTimeout) are uniform.
+// Run serves on addr until SIGINT/SIGTERM, then drains with a 10s deadline.
 func Run(log *slog.Logger, addr string, h http.Handler) {
 	srv := &http.Server{
 		Addr:              addr,

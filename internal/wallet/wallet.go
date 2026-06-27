@@ -1,10 +1,6 @@
-// Package wallet is the Wallet service: Ethereum key custody and transaction
-// signing, reusing go-ethereum's keystore (Web3 Secret Storage) so private keys
-// are encrypted at rest with scrypt + AES-128-CTR and never leave the service.
-//
-// On wallet creation it publishes a wallet.created domain event to the bus, so
-// downstream consumers (notifications, indexers) react without the wallet
-// service knowing they exist.
+// Package wallet manages Ethereum key custody via go-ethereum's encrypted
+// keystore (Web3 Secret Storage) and publishes wallet.created. Private keys are
+// never returned over the API.
 package wallet
 
 import (
@@ -22,13 +18,11 @@ import (
 	"github.com/AmeerHamza2/web3-event-platform/pkg/httpx"
 )
 
-// Wallet is the public (non-sensitive) view of an account.
 type Wallet struct {
 	Address   string    `json:"address"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// Service manages keystore-backed accounts.
 type Service struct {
 	ks         *keystore.KeyStore
 	passphrase string
@@ -39,8 +33,8 @@ type Service struct {
 	created map[common.Address]time.Time
 }
 
-// NewService opens (or creates) a keystore at dir. It uses light scrypt params
-// only when light is true (tests); production uses the standard (stronger) ones.
+// NewService opens or creates a keystore at dir. light selects the cheaper
+// scrypt parameters (tests/dev); production uses the standard ones.
 func NewService(dir, passphrase string, chainID int64, light bool, bus events.Bus) (*Service, error) {
 	if passphrase == "" {
 		return nil, errors.New("keystore passphrase must not be empty")
@@ -58,7 +52,7 @@ func NewService(dir, passphrase string, chainID int64, light bool, bus events.Bu
 	}, nil
 }
 
-// Create generates a fresh account, persists it encrypted, and publishes
+// Create generates an account, persists it encrypted, and publishes
 // wallet.created.
 func (s *Service) Create(ctx context.Context) (Wallet, error) {
 	acct, err := s.ks.NewAccount(s.passphrase)
@@ -75,7 +69,6 @@ func (s *Service) Create(ctx context.Context) (Wallet, error) {
 	return w, nil
 }
 
-// List returns all accounts in the keystore.
 func (s *Service) List() []Wallet {
 	accts := s.ks.Accounts()
 	out := make([]Wallet, 0, len(accts))
@@ -88,7 +81,6 @@ func (s *Service) List() []Wallet {
 	return out
 }
 
-// Routes returns the wallet service's HTTP handler.
 func (s *Service) Routes() http.Handler {
 	mux := http.NewServeMux()
 
@@ -101,7 +93,6 @@ func (s *Service) Routes() http.Handler {
 		httpx.JSON(w, http.StatusCreated, wal)
 	})
 
-	// Listing every wallet is admin-only (RBAC).
 	mux.Handle("GET /wallets", httpx.RequireRole("admin")(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			httpx.JSON(w, http.StatusOK, s.List())

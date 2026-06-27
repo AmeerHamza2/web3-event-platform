@@ -1,5 +1,4 @@
-// Package logging provides a small wrapper around log/slog so every service
-// emits structured JSON logs with a consistent service tag.
+// Package logging provides a JSON slog logger tagged with the service name.
 package logging
 
 import (
@@ -7,12 +6,8 @@ import (
 	"os"
 )
 
-// New returns a JSON structured logger tagged with the service name. In
-// production this lands in stdout where a log shipper (Loki, CloudWatch, ELK)
-// collects it; the service tag lets you filter one service out of the platform.
+// New returns a structured JSON logger tagged with service.
 func New(service string) *slog.Logger {
-	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})
+	h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
 	return slog.New(h).With(slog.String("service", service))
 }

@@ -1,11 +1,6 @@
-// Package auth provides stateless authentication (HS256 JWT bearer tokens) and
-// role-based authorization shared across the platform.
-//
-// The API Gateway is the single point that issues and verifies tokens (OAuth2
-// client-credentials shape: client_id + client_secret -> short-lived JWT). It
-// then forwards the authenticated subject and role to internal services as
-// trusted headers over the private network. Swapping HS256 for RS256 + an
-// external OIDC provider is a config change, not a redesign.
+// Package auth issues and verifies HS256 JWT bearer tokens and defines the
+// platform's roles. The gateway issues tokens via the OAuth2 client-credentials
+// grant and forwards the verified subject and role to internal services.
 package auth
 
 import (
@@ -16,13 +11,13 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-// Roles understood across the platform.
+// Roles.
 const (
 	RoleUser  = "user"
 	RoleAdmin = "admin"
 )
 
-// Headers the gateway injects after verifying a token, consumed by services.
+// Identity headers the gateway sets after verifying a token.
 const (
 	HeaderSubject = "X-Auth-Subject"
 	HeaderRole    = "X-Auth-Role"
@@ -39,7 +34,7 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// Token is an issued access token (OAuth2-style response body).
+// Token is an OAuth2-style token response.
 type Token struct {
 	AccessToken string `json:"access_token"`
 	TokenType   string `json:"token_type"`
@@ -47,14 +42,13 @@ type Token struct {
 	Role        string `json:"role"`
 }
 
-// Authenticator issues and verifies JWTs.
+// Authenticator issues and verifies tokens.
 type Authenticator struct {
 	secret []byte
 	issuer string
 	expiry time.Duration
 }
 
-// NewAuthenticator constructs the token issuer/verifier.
 func NewAuthenticator(secret, issuer string, expiry time.Duration) *Authenticator {
 	return &Authenticator{secret: []byte(secret), issuer: issuer, expiry: expiry}
 }
@@ -71,21 +65,15 @@ func (a *Authenticator) Issue(subject, role string) (*Token, error) {
 			ExpiresAt: jwt.NewNumericDate(now.Add(a.expiry)),
 		},
 	}
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signed, err := tok.SignedString(a.secret)
+	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(a.secret)
 	if err != nil {
 		return nil, fmt.Errorf("sign token: %w", err)
 	}
-	return &Token{
-		AccessToken: signed,
-		TokenType:   "Bearer",
-		ExpiresIn:   int(a.expiry.Seconds()),
-		Role:        role,
-	}, nil
+	return &Token{AccessToken: signed, TokenType: "Bearer", ExpiresIn: int(a.expiry.Seconds()), Role: role}, nil
 }
 
-// Verify parses and validates a bearer token, pinning the signing algorithm to
-// HS256 to defend against the alg=none / algorithm-confusion attack.
+// Verify validates a token, pinning the algorithm to HS256 to reject alg=none
+// and algorithm-confusion attacks.
 func (a *Authenticator) Verify(tokenString string) (*Claims, error) {
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (any, error) {

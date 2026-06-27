@@ -1,4 +1,3 @@
-// Command user runs the User service.
 package main
 
 import (
