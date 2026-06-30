@@ -27,6 +27,8 @@ func (c *Consumer) Start() error {
 		events.SubjectWalletCreated,
 		events.SubjectTxSubmitted,
 		events.SubjectPaymentMade,
+		events.SubjectChainTransfer,
+		events.SubjectChainReorg,
 	}
 	for _, subj := range subjects {
 		unsub, err := c.bus.Subscribe(subj, c.handle)

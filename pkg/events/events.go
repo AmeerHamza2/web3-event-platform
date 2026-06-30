@@ -19,6 +19,9 @@ const (
 	SubjectWalletCreated = "wallet.created"
 	SubjectTxSubmitted   = "transaction.submitted"
 	SubjectPaymentMade   = "payment.made"
+	SubjectChainBlock    = "chain.block"
+	SubjectChainTransfer = "chain.transfer"
+	SubjectChainReorg    = "chain.reorg"
 )
 
 // Event is the envelope for every message on the bus.

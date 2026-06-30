@@ -31,6 +31,31 @@ exercises it end to end.
 | `user` | User identities; publishes `user.created` | 8081 |
 | `wallet` | Ethereum key custody (encrypted keystore); publishes `wallet.created` | 8082 |
 | `notification` | Event consumer | 8083 |
+| `chainmonitor` | Follows an EVM chain: indexes blocks + ERC-20 transfers into Postgres, handles reorgs, publishes `chain.*` | 8084 |
+
+### Chain Monitor
+
+`chainmonitor` follows the chain tip over JSON-RPC and indexes blocks and ERC-20
+`Transfer` logs into Postgres. It is built for the realities of an L1:
+
+- **Event/log decoding.** `Transfer(address,address,uint256)` logs are filtered
+  by topic and decoded via the parsed ABI (indexed args from topics, value from
+  data).
+- **Reorg handling.** Each block is checked for parent-hash linkage and the tip
+  is re-validated every poll; on divergence the affected blocks are rolled back
+  (transfers cascade-delete) and re-indexed on the canonical chain.
+- **Confirmations / finality.** A block is marked `confirmed` only after a
+  configurable depth (`CONFIRMATIONS`), so reorgs only ever touch unconfirmed
+  data.
+
+The reorg, confirmation-gating, and decode logic are unit-tested against a fake
+chain backend, so the suite runs with no network or node.
+
+> **RPC endpoint:** sustained indexing needs a node that serves historical
+> blocks and `eth_getLogs` (e.g. a free Alchemy/Infura key) — set `ETH_RPC_URL`.
+> The bundled public endpoint follows the tip but rejects archive/log queries,
+> so the monitor will index near-tip blocks and then log-and-retry. It degrades
+> gracefully rather than crashing.
 
 Producers publish domain events and don't know who consumes them; adding a
 consumer is a deployment, not a change to producers. The `events.Bus`,
@@ -76,17 +101,16 @@ Without Docker: `make build && make test && make vet`.
 ## Layout
 
 ```
-cmd/        service entrypoints (gateway, user, wallet, notification)
-internal/   service-private logic
+cmd/        service entrypoints (gateway, user, wallet, notification, chainmonitor)
+internal/   service-private logic (incl. chainmonitor: indexer, reorg, decode)
 pkg/        shared: auth, events (NATS bus), httpx, logging, server
+migrations/ Postgres schema for the chain indexer
 scripts/    smoke.sh
 .github/    CI: fmt, vet, race tests, build, image build
 ```
 
 ## Roadmap
 
-1. Chain Monitor + Postgres — subscribe to Geth block/log events, index on-chain
-   activity.
-2. Kubernetes manifests behind an ingress controller.
-3. Prometheus metrics + OpenTelemetry tracing across services.
-4. Raft leader election so a single Chain Monitor instance ingests at a time.
+1. Kubernetes manifests behind an ingress controller.
+2. Prometheus metrics + OpenTelemetry tracing across services.
+3. Raft leader election so a single Chain Monitor instance ingests at a time.

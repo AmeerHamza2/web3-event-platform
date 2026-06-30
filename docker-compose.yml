@@ -55,6 +55,41 @@ services:
       nats: { condition: service_healthy }
     expose: ["8083"]
 
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: chainmonitor
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  chainmonitor:
+    build:
+      context: .
+      args: { SERVICE: chainmonitor }
+    environment:
+      CHAINMONITOR_ADDR: ":8084"
+      NATS_URL: "nats://nats:4222"
+      POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/chainmonitor?sslmode=disable"
+      # Default public node follows the tip but rejects historical/log queries
+      # (403 "archive request"), so sustained indexing needs a real endpoint —
+      # set ETH_RPC_URL to your own Alchemy/Infura URL. The monitor degrades
+      # gracefully (logs + retries) without one.
+      ETH_RPC_URL: "https://ethereum-sepolia-rpc.publicnode.com"
+      CONFIRMATIONS: "5"
+    depends_on:
+      nats: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    expose: ["8084"]
+
   gateway:
     build:
       context: .
@@ -78,3 +113,4 @@ services:
 
 volumes:
   wallet-keystore:
+  pg-data:
