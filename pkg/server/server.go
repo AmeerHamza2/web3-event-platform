@@ -27,6 +27,11 @@ func Run(log *slog.Logger, addr string, h http.Handler) {
 		Addr:              addr,
 		Handler:           h,
 		ReadHeaderTimeout: 5 * time.Second,
+		// Keep client/proxy connections warm for reuse under sustained load;
+		// bound total request time so a slow client can't pin a connection.
+		IdleTimeout:  90 * time.Second,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 30 * time.Second,
 	}
 
 	go func() {

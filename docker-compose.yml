@@ -26,12 +26,13 @@ services:
       NATS_URL: "nats://nats:4222"
       # Postgres-backed store keeps the service stateless -> horizontally scalable.
       POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/chainmonitor?sslmode=disable"
+      DB_MAX_CONNS: "15" # per replica; 3 replicas x 15 = 45 < Postgres max_connections
     depends_on:
       nats: { condition: service_healthy }
       postgres: { condition: service_healthy }
     expose: ["8081"]
     deploy:
-      replicas: 2 # stateless: run multiple instances behind the gateway
+      replicas: 3 # stateless: run multiple instances behind the gateway
 
   wallet:
     build:
@@ -96,6 +97,8 @@ services:
       # Replace with real network addresses; empty registry values every account to zero.
       ASSETS_JSON: "[]"
     expose: ["8085"]
+    deploy:
+      replicas: 3 # stateless compute: scale out behind the gateway
 
   chainmonitor:
     build:

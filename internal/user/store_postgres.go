@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -25,7 +28,20 @@ type PostgresStore struct {
 }
 
 func NewPostgresStore(ctx context.Context, dsn string) (*PostgresStore, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse dsn: %w", err)
+	}
+	// A bounded, warm pool is what lets a replica sustain load without opening a
+	// fresh connection per request or exhausting Postgres's connection slots.
+	// Size it per replica so (replicas * MaxConns) stays under Postgres max_connections.
+	cfg.MaxConns = envInt32("DB_MAX_CONNS", 20)
+	cfg.MinConns = envInt32("DB_MIN_CONNS", 4)
+	cfg.MaxConnLifetime = time.Hour
+	cfg.MaxConnIdleTime = 30 * time.Minute
+	cfg.HealthCheckPeriod = time.Minute
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
@@ -34,6 +50,15 @@ func NewPostgresStore(ctx context.Context, dsn string) (*PostgresStore, error) {
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 	return &PostgresStore{pool: pool}, nil
+}
+
+func envInt32(key string, def int32) int32 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 32); err == nil {
+			return int32(n)
+		}
+	}
+	return def
 }
 
 func (s *PostgresStore) Close() { s.pool.Close() }

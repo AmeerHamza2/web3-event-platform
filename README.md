@@ -143,9 +143,10 @@ load test (`loadtest/`) rather than asserted.
 
 **What makes it scale:**
 
-- **Stateless services.** The user service keeps state in Postgres, not in
-  process, so it runs as N replicas behind the gateway (`replicas: 2` in Compose;
-  an HPA to 20 in k8s). The gateway and margin engine are stateless too.
+- **Stateless services.** The user service keeps state in Postgres (via a tuned
+  `pgxpool` — bounded, warm connections), not in process, so it runs as N
+  replicas behind the gateway (3 in Compose; an HPA to 20 in k8s). The gateway
+  and margin engine are stateless too.
 - **Shared rate limiting.** A Redis-backed fixed-window limiter enforces one
   limit across all gateway replicas (the in-memory limiter only bounds a single
   instance).
@@ -154,24 +155,31 @@ load test (`loadtest/`) rather than asserted.
   user → 20), and an Ingress. Stateful singletons (wallet custody, chain
   monitor) are intentionally *not* autoscaled — and the README says why.
 
-**Measured** (full stack in Docker on a laptop, 100 concurrent clients, 15s):
+**Measured** (full stack in Docker on a laptop, `loadtest/`, 15s runs):
 
-| Path | Throughput | p50 | p99 | Errors |
+| Path | Concurrency | Throughput | p99 | Errors |
 |---|---|---|---|---|
-| Gateway edge (`/healthz`) | ~1,980 req/s | 35 ms | 150 ms | 0 |
-| Authed margin (JWT verify → proxy → engine) | ~1,600 req/s | 53 ms | 195 ms | 0 |
+| Gateway edge (`/healthz`) | 100 | ~1,980 req/s | 150 ms | 0 |
+| DB read (gateway → 3 user replicas → pooled Postgres) | 200 | ~1,640 req/s | 403 ms | 0 |
+| Authed margin (JWT → proxy → engine) | 200 | ~1,900 req/s | 320 ms | 0 |
 
-**What the load test caught:** the authed path initially failed ~60% of requests
-with 502s under concurrency. The cause was Go's default reverse-proxy transport
-(`MaxIdleConnsPerHost = 2`) churning connections; raising the idle pool took the
-path from 167 → ~1,600 req/s with zero errors. That fix is in
-[`internal/gateway/gateway.go`](internal/gateway/gateway.go).
+**Two things load testing caught and fixed** (this is the point of measuring):
+
+1. *Reverse-proxy 502s.* The authed path first failed ~60% under concurrency —
+   Go's default proxy transport keeps only 2 idle conns/host. Raising the idle
+   pool ([`internal/gateway/gateway.go`](internal/gateway/gateway.go)) took it
+   from 167 → ~1,600 req/s, zero errors.
+2. *Single-replica saturation.* At c=200 the margin service (1 replica) queued to
+   a p99 of 5.8s and shed connections. Scaling it to **3 replicas** demonstrated
+   linear scale-out: **512 → 1,908 req/s, p99 5.8s → 0.32s, failures → 0** — no
+   code change, just replicas.
 
 **Honest limits:** these are single-node-infra numbers on a laptop (one Postgres,
-one Redis), not a proof of "millions of users." The point is that the
-architecture scales *linearly with replicas* and has no per-instance state in the
-hot path — getting to very high scale is a matter of more replicas plus Postgres
-read replicas / connection pooling and load testing at that size, not a redesign.
+one Redis, one gateway process), not a proof of "millions of users." The value is
+that the hot path holds no per-instance state and **scales roughly linearly with
+replicas** (demonstrated above). Reaching very high scale is more replicas +
+Postgres read replicas + a gateway load balancer + testing at that size — a
+scaling exercise, not a redesign.
 
 ## Roadmap
 
