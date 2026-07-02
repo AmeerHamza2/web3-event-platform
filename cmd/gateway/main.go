@@ -44,6 +44,7 @@ func main() {
 		},
 		UserURL:   server.EnvOr("USER_URL", "http://localhost:8081"),
 		WalletURL: server.EnvOr("WALLET_URL", "http://localhost:8082"),
+		MarginURL: server.EnvOr("MARGIN_URL", "http://localhost:8085"),
 		RateLimit: gateway.NewRateLimiter(20, 40),
 	}
 

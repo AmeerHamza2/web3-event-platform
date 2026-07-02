@@ -24,6 +24,7 @@ type Config struct {
 	Clients   map[string]Client
 	UserURL   string
 	WalletURL string
+	MarginURL string
 	RateLimit *RateLimiter
 }
 
@@ -31,6 +32,7 @@ type Gateway struct {
 	cfg         Config
 	userProxy   *httputil.ReverseProxy
 	walletProxy *httputil.ReverseProxy
+	marginProxy *httputil.ReverseProxy
 }
 
 func New(cfg Config) (*Gateway, error) {
@@ -42,7 +44,16 @@ func New(cfg Config) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Gateway{cfg: cfg, userProxy: newProxy(uu), walletProxy: newProxy(wu)}, nil
+	mu, err := url.Parse(cfg.MarginURL)
+	if err != nil {
+		return nil, err
+	}
+	return &Gateway{
+		cfg:         cfg,
+		userProxy:   newProxy(uu),
+		walletProxy: newProxy(wu),
+		marginProxy: newProxy(mu),
+	}, nil
 }
 
 // newProxy strips the /api/v1 public prefix so upstreams see their native paths.
@@ -69,6 +80,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.Handle("/api/v1/users/", g.authed(g.userProxy))
 	mux.Handle("/api/v1/wallets", g.authed(g.walletProxy))
 	mux.Handle("/api/v1/wallets/", g.authed(g.walletProxy))
+	mux.Handle("/api/v1/margin/", g.authed(g.marginProxy))
 
 	return mux
 }

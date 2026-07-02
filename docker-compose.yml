@@ -71,6 +71,18 @@ services:
       timeout: 3s
       retries: 5
 
+  margin:
+    build:
+      context: .
+      args: { SERVICE: margin }
+    environment:
+      MARGIN_ADDR: ":8085"
+      ETH_RPC_URL: "https://ethereum-sepolia-rpc.publicnode.com"
+      # Collateral asset registry: token + Chainlink USD feed + haircut per asset.
+      # Replace with real network addresses; empty registry values every account to zero.
+      ASSETS_JSON: "[]"
+    expose: ["8085"]
+
   chainmonitor:
     build:
       context: .
@@ -100,6 +112,7 @@ services:
       JWT_SECRET: "dev-insecure-secret-change-me"
       USER_URL: "http://user:8081"
       WALLET_URL: "http://wallet:8082"
+      MARGIN_URL: "http://margin:8085"
       ADMIN_CLIENT_ID: "admin-client"
       ADMIN_CLIENT_SECRET: "admin-secret"
       USER_CLIENT_ID: "user-client"
@@ -110,6 +123,7 @@ services:
       - user
       - wallet
       - notification
+      - margin
 
 volumes:
   wallet-keystore:

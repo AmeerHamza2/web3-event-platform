@@ -32,6 +32,7 @@ exercises it end to end.
 | `wallet` | Ethereum key custody (encrypted keystore); publishes `wallet.created` | 8082 |
 | `notification` | Event consumer | 8083 |
 | `chainmonitor` | Follows an EVM chain: indexes blocks + ERC-20 transfers into Postgres, handles reorgs, publishes `chain.*` | 8084 |
+| `margin` | Portfolio margin engine: values an account's on-chain holdings and computes a health factor / margin status | 8085 |
 
 ### Chain Monitor
 
@@ -56,6 +57,30 @@ chain backend, so the suite runs with no network or node.
 > The bundled public endpoint follows the tip but rejects archive/log queries,
 > so the monitor will index near-tip blocks and then log-and-retry. It degrades
 > gracefully rather than crashing.
+
+### Margin engine
+
+`margin` is a simplified DeFi prime-broker risk layer. Given an account, it:
+
+- **Reads on-chain positions** — ERC-20 `balanceOf` via `eth_call` (ABI-bound).
+- **Values them** — each holding is marked to USD through a `PriceOracle`
+  (Chainlink `latestRoundData` adapter; a static oracle backs tests).
+- **Applies collateral factors** — per-asset haircuts give the weighted
+  collateral (borrowing power).
+- **Computes a health factor** — `weighted collateral / debt`, and a status:
+  `healthy` → `margin_call` → `liquidatable`.
+
+```
+GET /api/v1/margin/{address}?debt_usd=1500
+{ "gross_collateral_usd": "2000.00", "weighted_collateral_usd": "1600.00",
+  "debt_usd": "1500.00", "health_factor": "1.0667", "status": "margin_call", ... }
+```
+
+The valuation and health-factor math is exact (`big.Rat`) and unit-tested at the
+threshold boundaries (HF = 1.15 and 1.00), where a risk engine's correctness
+actually matters. On-chain reads sit behind `BalanceReader` / `PriceOracle`
+interfaces, so the risk logic tests with no node. Configure the collateral
+registry (token, decimals, Chainlink feed, haircut) via `ASSETS_JSON`.
 
 Producers publish domain events and don't know who consumes them; adding a
 consumer is a deployment, not a change to producers. The `events.Bus`,
@@ -101,8 +126,8 @@ Without Docker: `make build && make test && make vet`.
 ## Layout
 
 ```
-cmd/        service entrypoints (gateway, user, wallet, notification, chainmonitor)
-internal/   service-private logic (incl. chainmonitor: indexer, reorg, decode)
+cmd/        service entrypoints (gateway, user, wallet, notification, chainmonitor, margin)
+internal/   service-private logic (chainmonitor: indexer/reorg/decode; margin: valuation/risk)
 pkg/        shared: auth, events (NATS bus), httpx, logging, server
 migrations/ Postgres schema for the chain indexer
 scripts/    smoke.sh

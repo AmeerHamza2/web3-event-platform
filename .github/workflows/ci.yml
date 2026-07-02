@@ -27,7 +27,7 @@ jobs:
 
       - name: Build (static binaries)
         run: |
-          for svc in gateway user wallet notification chainmonitor; do
+          for svc in gateway user wallet notification chainmonitor margin; do
             CGO_ENABLED=0 go build -trimpath -o /dev/null ./cmd/$svc
           done
 
@@ -36,7 +36,7 @@ jobs:
     needs: test
     strategy:
       matrix:
-        service: [gateway, user, wallet, notification, chainmonitor]
+        service: [gateway, user, wallet, notification, chainmonitor, margin]
     steps:
       - uses: actions/checkout@v4
 
