@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 
 	"github.com/AmeerHamza2/web3-event-platform/internal/user"
@@ -15,6 +16,7 @@ func main() {
 
 	addr := server.EnvOr("USER_ADDR", ":8081")
 	natsURL := server.EnvOr("NATS_URL", "nats://localhost:4222")
+	dsn := os.Getenv("POSTGRES_DSN")
 
 	bus, err := events.Connect(natsURL)
 	if err != nil {
@@ -23,7 +25,10 @@ func main() {
 	}
 	defer bus.Close()
 
-	svc := user.NewService(user.NewMemStore(), bus)
+	// Postgres keeps the service stateless so replicas scale horizontally;
+	// in-memory is the local/dev fallback.
+	store := selectStore(log, dsn)
+	svc := user.NewService(store, bus)
 
 	handler := httpx.Chain(svc.Routes(),
 		httpx.RequestID,
@@ -32,4 +37,22 @@ func main() {
 	)
 
 	server.Run(log, addr, handler)
+}
+
+func selectStore(log interface {
+	Info(string, ...any)
+	Warn(string, ...any)
+	Error(string, ...any)
+}, dsn string) user.Store {
+	if dsn == "" {
+		log.Warn("POSTGRES_DSN not set; using in-memory store (single-instance only)")
+		return user.NewMemStore()
+	}
+	store, err := user.NewPostgresStore(context.Background(), dsn)
+	if err != nil {
+		log.Error("connect postgres", "error", err)
+		os.Exit(1)
+	}
+	log.Info("using postgres store (stateless, horizontally scalable)")
+	return store
 }

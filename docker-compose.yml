@@ -24,9 +24,14 @@ services:
     environment:
       USER_ADDR: ":8081"
       NATS_URL: "nats://nats:4222"
+      # Postgres-backed store keeps the service stateless -> horizontally scalable.
+      POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/chainmonitor?sslmode=disable"
     depends_on:
       nats: { condition: service_healthy }
+      postgres: { condition: service_healthy }
     expose: ["8081"]
+    deploy:
+      replicas: 2 # stateless: run multiple instances behind the gateway
 
   wallet:
     build:
@@ -67,6 +72,15 @@ services:
       - pg-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    expose: ["6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -113,6 +127,8 @@ services:
       USER_URL: "http://user:8081"
       WALLET_URL: "http://wallet:8082"
       MARGIN_URL: "http://margin:8085"
+      REDIS_ADDR: "redis:6379" # shared rate limiting across gateway replicas
+      RATE_LIMIT_PER_MIN: "6000000" # raised so local load tests measure throughput, not the limit
       ADMIN_CLIENT_ID: "admin-client"
       ADMIN_CLIENT_SECRET: "admin-secret"
       USER_CLIENT_ID: "user-client"
@@ -120,10 +136,11 @@ services:
     ports:
       - "8080:8080" # the only publicly exposed service
     depends_on:
-      - user
-      - wallet
-      - notification
-      - margin
+      redis: { condition: service_healthy }
+      user: { condition: service_started }
+      wallet: { condition: service_started }
+      notification: { condition: service_started }
+      margin: { condition: service_started }
 
 volumes:
   wallet-keystore:

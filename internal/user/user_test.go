@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
@@ -48,7 +49,17 @@ func TestRegisterRejectsBadEmail(t *testing.T) {
 
 func TestStoreGetMissing(t *testing.T) {
 	s := NewMemStore()
-	if _, err := s.Get("nope"); err != ErrNotFound {
+	if _, err := s.Get(context.Background(), "nope"); err != ErrNotFound {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestStoreRejectsDuplicateEmail(t *testing.T) {
+	svc := NewService(NewMemStore(), &mockBus{})
+	if _, err := svc.Register(context.Background(), "dup@example.com"); err != nil {
+		t.Fatalf("first register: %v", err)
+	}
+	if _, err := svc.Register(context.Background(), "dup@example.com"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("expected ErrConflict on duplicate email, got %v", err)
 	}
 }

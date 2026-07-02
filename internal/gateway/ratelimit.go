@@ -1,11 +1,18 @@
 package gateway
 
 import (
+	"context"
 	"sync"
 	"time"
 )
 
-// RateLimiter is a per-key token-bucket limiter, keyed by client IP at the edge.
+// Limiter decides whether a request keyed by (client IP) may proceed.
+// In-memory suits a single gateway; Redis shares limits across replicas.
+type Limiter interface {
+	Allow(ctx context.Context, key string) bool
+}
+
+// RateLimiter is a per-key token-bucket limiter local to one process.
 type RateLimiter struct {
 	rate    float64 // tokens per second
 	burst   float64 // bucket capacity
@@ -24,7 +31,7 @@ func NewRateLimiter(rate, burst float64) *RateLimiter {
 }
 
 // Allow reports whether a request for key may proceed, consuming a token.
-func (rl *RateLimiter) Allow(key string) bool {
+func (rl *RateLimiter) Allow(_ context.Context, key string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 

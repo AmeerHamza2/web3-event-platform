@@ -84,6 +84,10 @@ func (s *Service) List() []Wallet {
 func (s *Service) Routes() http.Handler {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		httpx.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+
 	mux.HandleFunc("POST /wallets", func(w http.ResponseWriter, r *http.Request) {
 		wal, err := s.Create(r.Context())
 		if err != nil {

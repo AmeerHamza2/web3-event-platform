@@ -1,0 +1,173 @@
+# Internal services. user and margin are stateless and horizontally scalable
+# (user reads/writes Postgres; margin is compute-only), so they carry HPAs.
+# Images are built from the repo Dockerfile: docker build --build-arg SERVICE=<name>.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: user } }
+  template:
+    metadata: { labels: { app: user } }
+    spec:
+      containers:
+        - name: user
+          image: web3-event-platform/user:latest
+          ports: [{ containerPort: 8081 }]
+          envFrom:
+            - configMapRef: { name: platform-config }
+          env:
+            - name: POSTGRES_DSN
+              valueFrom: { secretKeyRef: { name: platform-secrets, key: POSTGRES_DSN } }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8081 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8081 }
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources:
+            requests: { cpu: "100m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "128Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: user }
+spec:
+  selector: { app: user }
+  ports: [{ port: 8081 }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: user }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: user }
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: margin
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: margin } }
+  template:
+    metadata: { labels: { app: margin } }
+    spec:
+      containers:
+        - name: margin
+          image: web3-event-platform/margin:latest
+          ports: [{ containerPort: 8085 }]
+          envFrom:
+            - configMapRef: { name: platform-config }
+          env:
+            - { name: MARGIN_ADDR, value: ":8085" }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8085 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "100m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "128Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: margin }
+spec:
+  selector: { app: margin }
+  ports: [{ port: 8085 }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: margin }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: margin }
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+---
+# wallet: single instance — it holds an on-disk keystore, so it is intentionally
+# NOT horizontally scaled here. Production would move custody to KMS/HSM and
+# then this becomes stateless too.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wallet
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: wallet } }
+  template:
+    metadata: { labels: { app: wallet } }
+    spec:
+      containers:
+        - name: wallet
+          image: web3-event-platform/wallet:latest
+          ports: [{ containerPort: 8082 }]
+          envFrom:
+            - configMapRef: { name: platform-config }
+          env:
+            - { name: KEYSTORE_LIGHT_SCRYPT, value: "true" }
+            - name: KEYSTORE_PASSPHRASE
+              valueFrom: { secretKeyRef: { name: platform-secrets, key: KEYSTORE_PASSPHRASE } }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8082 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata: { name: wallet }
+spec:
+  selector: { app: wallet }
+  ports: [{ port: 8082 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: notification } }
+  template:
+    metadata: { labels: { app: notification } }
+    spec:
+      containers:
+        - name: notification
+          image: web3-event-platform/notification:latest
+          ports: [{ containerPort: 8083 }]
+          envFrom:
+            - configMapRef: { name: platform-config }
+---
+# chainmonitor: single instance by design — only one indexer should follow the
+# tip at a time (the roadmap Raft leader-election generalises this to HA).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chainmonitor
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: chainmonitor } }
+  template:
+    metadata: { labels: { app: chainmonitor } }
+    spec:
+      containers:
+        - name: chainmonitor
+          image: web3-event-platform/chainmonitor:latest
+          ports: [{ containerPort: 8084 }]
+          envFrom:
+            - configMapRef: { name: platform-config }
+          env:
+            - name: POSTGRES_DSN
+              valueFrom: { secretKeyRef: { name: platform-secrets, key: POSTGRES_DSN } }

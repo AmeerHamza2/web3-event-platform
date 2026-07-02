@@ -4,14 +4,31 @@
 package gateway
 
 import (
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/AmeerHamza2/web3-event-platform/pkg/auth"
 	"github.com/AmeerHamza2/web3-event-platform/pkg/httpx"
 )
+
+// proxyTransport is shared by all upstream proxies. The default transport keeps
+// only 2 idle connections per host, which collapses under concurrency (idle
+// connections churn and race the upstream closing them -> 502s). A generous
+// idle pool keeps connections warm and eliminates that failure mode.
+var proxyTransport = &http.Transport{
+	Proxy:               http.ProxyFromEnvironment,
+	MaxIdleConns:        1024,
+	MaxIdleConnsPerHost: 256,
+	IdleConnTimeout:     90 * time.Second,
+	DialContext: (&net.Dialer{
+		Timeout:   5 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+}
 
 // Client is a registered machine-to-machine credential.
 type Client struct {
@@ -25,7 +42,7 @@ type Config struct {
 	UserURL   string
 	WalletURL string
 	MarginURL string
-	RateLimit *RateLimiter
+	RateLimit Limiter
 }
 
 type Gateway struct {
@@ -59,6 +76,7 @@ func New(cfg Config) (*Gateway, error) {
 // newProxy strips the /api/v1 public prefix so upstreams see their native paths.
 func newProxy(target *url.URL) *httputil.ReverseProxy {
 	p := httputil.NewSingleHostReverseProxy(target)
+	p.Transport = proxyTransport
 	orig := p.Director
 	p.Director = func(r *http.Request) {
 		orig(r)
@@ -114,7 +132,7 @@ func (g *Gateway) issueToken(w http.ResponseWriter, r *http.Request) {
 // subject and role to the upstream.
 func (g *Gateway) authed(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if g.cfg.RateLimit != nil && !g.cfg.RateLimit.Allow(clientIP(r)) {
+		if g.cfg.RateLimit != nil && !g.cfg.RateLimit.Allow(r.Context(), clientIP(r)) {
 			httpx.Error(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}

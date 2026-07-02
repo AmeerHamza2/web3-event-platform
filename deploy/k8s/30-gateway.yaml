@@ -1,0 +1,75 @@
+# Public edge: stateless gateway replicas (shared rate limiting via Redis),
+# autoscaled on CPU, exposed through an Ingress.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: gateway } }
+  template:
+    metadata: { labels: { app: gateway } }
+    spec:
+      containers:
+        - name: gateway
+          image: web3-event-platform/gateway:latest
+          ports: [{ containerPort: 8080 }]
+          envFrom:
+            - configMapRef: { name: platform-config }
+          env:
+            - { name: GATEWAY_ADDR, value: ":8080" }
+            - name: JWT_SECRET
+              valueFrom: { secretKeyRef: { name: platform-secrets, key: JWT_SECRET } }
+            - name: ADMIN_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: platform-secrets, key: ADMIN_CLIENT_SECRET } }
+            - name: USER_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: platform-secrets, key: USER_CLIENT_SECRET } }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources:
+            requests: { cpu: "100m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "128Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: gateway }
+spec:
+  selector: { app: gateway }
+  ports: [{ port: 80, targetPort: 8080 }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: gateway }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: gateway }
+  minReplicas: 3
+  maxReplicas: 30
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 65 }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port: { number: 80 }

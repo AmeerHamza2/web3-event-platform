@@ -1,6 +1,6 @@
 // Package user owns user identities and publishes user.created. Store abstracts
-// persistence; the MVP ships an in-memory implementation, Postgres is the
-// production swap.
+// persistence: an in-memory implementation backs tests, Postgres backs the
+// stateless production service so instances can scale horizontally.
 package user
 
 import (
@@ -17,7 +17,10 @@ import (
 	"github.com/AmeerHamza2/web3-event-platform/pkg/httpx"
 )
 
-var ErrNotFound = errors.New("user not found")
+var (
+	ErrNotFound = errors.New("user not found")
+	ErrConflict = errors.New("email already registered")
+)
 
 type User struct {
 	ID        string    `json:"id"`
@@ -25,13 +28,14 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Store persists users. Implementations must be safe for concurrent use.
 type Store interface {
-	Create(u User) error
-	Get(id string) (User, error)
-	List() []User
+	Create(ctx context.Context, u User) error
+	Get(ctx context.Context, id string) (User, error)
+	List(ctx context.Context) ([]User, error)
 }
 
-// MemStore is a concurrency-safe in-memory Store.
+// MemStore is a concurrency-safe in-memory Store for tests.
 type MemStore struct {
 	mu    sync.RWMutex
 	users map[string]User
@@ -39,14 +43,19 @@ type MemStore struct {
 
 func NewMemStore() *MemStore { return &MemStore{users: make(map[string]User)} }
 
-func (m *MemStore) Create(u User) error {
+func (m *MemStore) Create(_ context.Context, u User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, existing := range m.users {
+		if existing.Email == u.Email {
+			return ErrConflict
+		}
+	}
 	m.users[u.ID] = u
 	return nil
 }
 
-func (m *MemStore) Get(id string) (User, error) {
+func (m *MemStore) Get(_ context.Context, id string) (User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	u, ok := m.users[id]
@@ -56,14 +65,14 @@ func (m *MemStore) Get(id string) (User, error) {
 	return u, nil
 }
 
-func (m *MemStore) List() []User {
+func (m *MemStore) List(_ context.Context) ([]User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]User, 0, len(m.users))
 	for _, u := range m.users {
 		out = append(out, u)
 	}
-	return out
+	return out, nil
 }
 
 type Service struct {
@@ -81,7 +90,7 @@ func (s *Service) Register(ctx context.Context, email string) (User, error) {
 		return User{}, errors.New("invalid email")
 	}
 	u := User{ID: uuid.NewString(), Email: email, CreatedAt: time.Now().UTC()}
-	if err := s.store.Create(u); err != nil {
+	if err := s.store.Create(ctx, u); err != nil {
 		return User{}, err
 	}
 	_ = s.bus.Publish(ctx, events.SubjectUserCreated, u) // best-effort
@@ -95,6 +104,10 @@ type registerRequest struct {
 func (s *Service) Routes() http.Handler {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		httpx.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+
 	mux.HandleFunc("POST /users", func(w http.ResponseWriter, r *http.Request) {
 		var req registerRequest
 		if err := httpx.DecodeJSON(r, &req); err != nil {
@@ -102,7 +115,11 @@ func (s *Service) Routes() http.Handler {
 			return
 		}
 		u, err := s.Register(r.Context(), req.Email)
-		if err != nil {
+		switch {
+		case errors.Is(err, ErrConflict):
+			httpx.Error(w, http.StatusConflict, "email already registered")
+			return
+		case err != nil:
 			httpx.Error(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -110,7 +127,7 @@ func (s *Service) Routes() http.Handler {
 	})
 
 	mux.HandleFunc("GET /users/{id}", func(w http.ResponseWriter, r *http.Request) {
-		u, err := s.store.Get(r.PathValue("id"))
+		u, err := s.store.Get(r.Context(), r.PathValue("id"))
 		if err != nil {
 			httpx.Error(w, http.StatusNotFound, "user not found")
 			return
@@ -120,7 +137,12 @@ func (s *Service) Routes() http.Handler {
 
 	mux.Handle("GET /users", httpx.RequireRole("admin")(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			httpx.JSON(w, http.StatusOK, s.store.List())
+			users, err := s.store.List(r.Context())
+			if err != nil {
+				httpx.Error(w, http.StatusInternalServerError, "could not list users")
+				return
+			}
+			httpx.JSON(w, http.StatusOK, users)
 		})))
 
 	return mux

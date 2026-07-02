@@ -130,9 +130,48 @@ cmd/        service entrypoints (gateway, user, wallet, notification, chainmonit
 internal/   service-private logic (chainmonitor: indexer/reorg/decode; margin: valuation/risk)
 pkg/        shared: auth, events (NATS bus), httpx, logging, server
 migrations/ Postgres schema for the chain indexer
+deploy/k8s/ Kubernetes manifests (Deployments, Services, HPA, Ingress)
+loadtest/   dependency-free concurrent HTTP load generator
 scripts/    smoke.sh
 .github/    CI: fmt, vet, race tests, build, image build
 ```
+
+## Scalability
+
+The platform is built to scale horizontally, and the design was validated with a
+load test (`loadtest/`) rather than asserted.
+
+**What makes it scale:**
+
+- **Stateless services.** The user service keeps state in Postgres, not in
+  process, so it runs as N replicas behind the gateway (`replicas: 2` in Compose;
+  an HPA to 20 in k8s). The gateway and margin engine are stateless too.
+- **Shared rate limiting.** A Redis-backed fixed-window limiter enforces one
+  limit across all gateway replicas (the in-memory limiter only bounds a single
+  instance).
+- **Kubernetes.** `deploy/k8s/` has Deployments, Services, readiness/liveness
+  probes, resource requests/limits, HorizontalPodAutoscalers (gateway → 30,
+  user → 20), and an Ingress. Stateful singletons (wallet custody, chain
+  monitor) are intentionally *not* autoscaled — and the README says why.
+
+**Measured** (full stack in Docker on a laptop, 100 concurrent clients, 15s):
+
+| Path | Throughput | p50 | p99 | Errors |
+|---|---|---|---|---|
+| Gateway edge (`/healthz`) | ~1,980 req/s | 35 ms | 150 ms | 0 |
+| Authed margin (JWT verify → proxy → engine) | ~1,600 req/s | 53 ms | 195 ms | 0 |
+
+**What the load test caught:** the authed path initially failed ~60% of requests
+with 502s under concurrency. The cause was Go's default reverse-proxy transport
+(`MaxIdleConnsPerHost = 2`) churning connections; raising the idle pool took the
+path from 167 → ~1,600 req/s with zero errors. That fix is in
+[`internal/gateway/gateway.go`](internal/gateway/gateway.go).
+
+**Honest limits:** these are single-node-infra numbers on a laptop (one Postgres,
+one Redis), not a proof of "millions of users." The point is that the
+architecture scales *linearly with replicas* and has no per-instance state in the
+hot path — getting to very high scale is a matter of more replicas plus Postgres
+read replicas / connection pooling and load testing at that size, not a redesign.
 
 ## Roadmap
 

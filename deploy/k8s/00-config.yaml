@@ -1,0 +1,27 @@
+# Non-secret configuration shared by the services.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-config
+data:
+  NATS_URL: "nats://nats:4222"
+  REDIS_ADDR: "redis:6379"
+  USER_URL: "http://user:8081"
+  WALLET_URL: "http://wallet:8082"
+  MARGIN_URL: "http://margin:8085"
+  ETH_RPC_URL: "https://ethereum-sepolia-rpc.publicnode.com"
+  ENV: "production"
+---
+# Secrets. In a real cluster these come from a sealed-secret / external secrets
+# operator, not plain YAML — inlined here only so the manifests are runnable.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-secrets
+type: Opaque
+stringData:
+  JWT_SECRET: "change-me-in-real-deploys"
+  ADMIN_CLIENT_SECRET: "admin-secret"
+  USER_CLIENT_SECRET: "user-secret"
+  KEYSTORE_PASSPHRASE: "change-me"
+  POSTGRES_DSN: "postgres://postgres:postgres@postgres:5432/platform?sslmode=disable"
